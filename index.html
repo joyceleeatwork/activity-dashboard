@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>活動記錄儀表板</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f0; color: #1a1a1a; min-height: 100vh; }
+
+  .header { background: #fff; border-bottom: 1px solid #e8e8e4; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+  .header h1 { font-size: 18px; font-weight: 600; }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  .upd { font-size: 12px; color: #999; }
+  .refresh-btn { height: 32px; padding: 0 14px; background: #fff; border: 1px solid #ddd; border-radius: 8px; font-size: 12px; color: #555; cursor: pointer; transition: background .2s; }
+  .refresh-btn:hover { background: #f5f5f0; }
+
+  .main { max-width: 860px; margin: 0 auto; padding: 20px 16px; }
+
+  .loading { text-align: center; padding: 60px 20px; color: #aaa; font-size: 14px; }
+  .error { background: #FAECE7; border: 1px solid #F5C4B3; border-radius: 10px; padding: 14px 18px; color: #712B13; font-size: 13px; margin-bottom: 16px; }
+
+  .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+  .mc { background: #fff; border: 1px solid #e8e8e4; border-radius: 12px; padding: 16px 18px; text-align: center; }
+  .mc-icon { font-size: 22px; margin-bottom: 8px; }
+  .mc-val { font-size: 32px; font-weight: 700; line-height: 1; margin-bottom: 4px; }
+  .mc-lbl { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+  .mc-sub { font-size: 11px; color: #aaa; }
+
+  .card { background: #fff; border: 1px solid #e8e8e4; border-radius: 12px; padding: 18px 20px; margin-bottom: 16px; }
+  .sec { font-size: 13px; font-weight: 600; color: #444; margin-bottom: 16px; }
+
+  .frow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+  .frow label { font-size: 13px; color: #666; }
+  .frow select { height: 34px; border: 1px solid #ddd; border-radius: 8px; padding: 0 10px; font-size: 13px; background: #fafafa; outline: none; cursor: pointer; }
+
+  .brow { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+  .blbl { font-size: 14px; font-weight: 500; width: 70px; flex-shrink: 0; color: #333; }
+  .btrack { flex: 1; height: 12px; background: #f0f0ec; border-radius: 6px; overflow: hidden; }
+  .bfill { height: 100%; border-radius: 6px; transition: width .6s ease; }
+  .bcnt { font-size: 14px; font-weight: 600; min-width: 36px; text-align: right; color: #333; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { font-size: 11px; font-weight: 600; color: #999; text-align: left; padding: 6px 10px; border-bottom: 1px solid #eee; text-transform: uppercase; letter-spacing: .04em; }
+  td { padding: 9px 10px; border-bottom: 1px solid #f5f5f0; color: #333; vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  .tag { display: inline-block; font-size: 11px; padding: 3px 10px; border-radius: 20px; margin: 1px 2px; font-weight: 500; }
+  .empty { text-align: center; padding: 2rem; color: #bbb; font-size: 14px; }
+
+  @media (max-width: 600px) {
+    .metrics { grid-template-columns: repeat(2, 1fr); }
+    .mc-val { font-size: 26px; }
+    .header { padding: 14px 16px; }
+    .blbl { width: 60px; font-size: 13px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>活動記錄儀表板</h1>
+  <div class="header-right">
+    <span class="upd" id="upd"></span>
+    <button class="refresh-btn" onclick="load()">↻ 重新整理</button>
+  </div>
+</div>
+
+<div class="main">
+  <div id="errMsg" style="display:none" class="error"></div>
+  <div id="loading" class="loading">載入中...</div>
+  <div id="dash" style="display:none">
+
+    <div class="metrics" id="mrow"></div>
+
+    <div class="frow">
+      <label>月份篩選：</label>
+      <select id="fmon" onchange="render()"><option value="">全部月份</option></select>
+    </div>
+
+    <div class="card">
+      <div class="sec">活動筆數比較</div>
+      <div id="bars"></div>
+    </div>
+
+    <div class="card">
+      <div class="sec">最近記錄</div>
+      <div id="rtbl"></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── 設定區（只需修改這裡）──────────────────────────────
+var SHEET_ID   = '11oXaXOMoM9kGki123tSH7vOtxEaW_0aidusZS1L7k8o';
+var SHEET_NAME = '工作表1';
+// 想追蹤的活動名稱（需與 Google Sheet 標題列完全一致）
+var ACTIVITIES = ['重訓', '瑜珈', 'Gym', 'Hiking'];
+// ──────────────────────────────────────────────────────
+
+var STYLES = {
+  '重訓': { fill:'#EEEDFE', text:'#3C3489', bar:'#7F77DD', icon:'🏋️' },
+  '瑜珈': { fill:'#E1F5EE', text:'#085041', bar:'#1D9E75', icon:'🧘' },
+  'Gym':  { fill:'#E6F1FB', text:'#0C447C', bar:'#378ADD', icon:'💪' },
+  'Hiking':{ fill:'#EAF3DE', text:'#27500A', bar:'#639922', icon:'🥾' },
+};
+function styleOf(name) {
+  return STYLES[name] || {fill:'#F1EFE8',text:'#444441',bar:'#888780',icon:'📌'};
+}
+
+var ROWS = [], HDRS = [], ACT_COLS = {};
+
+function parseDate(s) {
+  if (!s) return null;
+  s = s.toString().trim();
+  var m = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+  if (m) { var d = new Date(+m[1], +m[2]-1, +m[3]); return isNaN(d.getTime()) ? null : d; }
+  return null;
+}
+function parseCSV(text) {
+  var rows = [], lines = text.split('\n');
+  for (var li = 0; li < lines.length; li++) {
+    var line = lines[li]; if (!line.trim()) continue;
+    var cols = [], cur = '', inQ = false;
+    for (var i = 0; i < line.length; i++) {
+      var c = line[i];
+      if (c === '"') { inQ = !inQ; continue; }
+      if (c === ',' && !inQ) { cols.push(cur); cur = ''; continue; }
+      cur += c;
+    }
+    cols.push(cur); rows.push(cols);
+  }
+  return rows;
+}
+
+function load() {
+  document.getElementById('loading').style.display = '';
+  document.getElementById('dash').style.display = 'none';
+  document.getElementById('errMsg').style.display = 'none';
+  var url = 'https://docs.google.com/spreadsheets/d/' + SHEET_ID + '/gviz/tq?tqx=out:csv&sheet=' + encodeURIComponent(SHEET_NAME);
+  fetch(url).then(function(r) {
+    if (!r.ok) throw new Error('讀取失敗（' + r.status + '）：請確認 Google Sheet 已設為公開');
+    return r.text();
+  }).then(function(text) {
+    var rows = parseCSV(text);
+    if (rows.length < 2) throw new Error('工作表資料不足');
+    HDRS = rows[0];
+    // 找出各活動的欄位索引
+    ACT_COLS = {};
+    for (var a = 0; a < ACTIVITIES.length; a++) {
+      var name = ACTIVITIES[a];
+      for (var j = 0; j < HDRS.length; j++) {
+        if (HDRS[j].trim() === name) { ACT_COLS[name] = j; break; }
+      }
+    }
+    ROWS = rows.slice(1).filter(function(r) { return r.some(function(c) { return c.trim(); }); });
+    buildMonthFilter();
+    render();
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('dash').style.display = '';
+    document.getElementById('upd').textContent = '更新：' + new Date().toLocaleTimeString('zh-TW');
+  }).catch(function(e) {
+    document.getElementById('loading').style.display = 'none';
+    var el = document.getElementById('errMsg');
+    el.textContent = '錯誤：' + e.message;
+    el.style.display = '';
+  });
+}
+
+function buildMonthFilter() {
+  var seen = {}, months = [];
+  for (var i = 0; i < ROWS.length; i++) {
+    for (var a = 0; a < ACTIVITIES.length; a++) {
+      var ci = ACT_COLS[ACTIVITIES[a]];
+      if (ci === undefined) continue;
+      var d = parseDate(ROWS[i][ci]);
+      if (d) {
+        var k = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+        if (!seen[k]) { seen[k] = true; months.push(k); }
+      }
+    }
+  }
+  months.sort().reverse();
+  var fm = document.getElementById('fmon');
+  fm.innerHTML = '<option value="">全部月份</option>' + months.map(function(m) {
+    return '<option value="' + m + '">' + m.replace('-', '年') + '月</option>';
+  }).join('');
+}
+
+function getFiltered() {
+  var fm = document.getElementById('fmon').value;
+  if (!fm) return ROWS;
+  return ROWS.filter(function(r) {
+    for (var a = 0; a < ACTIVITIES.length; a++) {
+      var ci = ACT_COLS[ACTIVITIES[a]];
+      if (ci === undefined) continue;
+      var d = parseDate(r[ci]);
+      if (d && d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') === fm) return true;
+    }
+    return false;
+  });
+}
+
+function render() {
+  var data = getFiltered();
+  var counts = {};
+  for (var a = 0; a < ACTIVITIES.length; a++) counts[ACTIVITIES[a]] = 0;
+
+  for (var i = 0; i < data.length; i++) {
+    for (var a = 0; a < ACTIVITIES.length; a++) {
+      var name = ACTIVITIES[a];
+      var ci = ACT_COLS[name];
+      if (ci !== undefined && parseDate(data[i][ci])) counts[name]++;
+    }
+  }
+
+  // 四個方塊
+  document.getElementById('mrow').innerHTML = ACTIVITIES.map(function(name) {
+    var s = styleOf(name);
+    return '<div class="mc" style="border-top: 3px solid ' + s.bar + '">' +
+      '<div class="mc-icon">' + s.icon + '</div>' +
+      '<div class="mc-val" style="color:' + s.bar + '">' + counts[name] + '</div>' +
+      '<div class="mc-lbl">' + name + '</div>' +
+      '<div class="mc-sub">筆記錄</div>' +
+      '</div>';
+  }).join('');
+
+  // 條形圖
+  var maxCnt = Math.max.apply(null, ACTIVITIES.map(function(n) { return counts[n]; }));
+  if (maxCnt === 0) maxCnt = 1;
+  document.getElementById('bars').innerHTML = ACTIVITIES.slice().sort(function(a,b){ return counts[b]-counts[a]; }).map(function(name) {
+    var s = styleOf(name);
+    var pct = Math.round(counts[name] / maxCnt * 100);
+    return '<div class="brow">' +
+      '<span class="blbl">' + name + '</span>' +
+      '<div class="btrack"><div class="bfill" style="width:' + pct + '%;background:' + s.bar + '"></div></div>' +
+      '<span class="bcnt">' + counts[name] + '</span>' +
+      '</div>';
+  }).join('');
+
+  // 最近記錄
+  var entries = [];
+  for (var i = 0; i < data.length; i++) {
+    for (var a = 0; a < ACTIVITIES.length; a++) {
+      var name = ACTIVITIES[a];
+      var ci = ACT_COLS[name];
+      if (ci === undefined) continue;
+      var d = parseDate(data[i][ci]);
+      if (d) entries.push({ date: d, name: name });
+    }
+  }
+  entries.sort(function(a,b) { return b.date - a.date; });
+  entries = entries.slice(0, 30);
+
+  var byDate = {};
+  for (var e = 0; e < entries.length; e++) {
+    var dk = entries[e].date.toLocaleDateString('zh-TW');
+    if (!byDate[dk]) byDate[dk] = { date: entries[e].date, names: [] };
+    byDate[dk].names.push(entries[e].name);
+  }
+  var dkeys = Object.keys(byDate).sort(function(a,b) { return byDate[b].date - byDate[a].date; });
+  if (!dkeys.length) { document.getElementById('rtbl').innerHTML = '<div class="empty">無資料</div>'; return; }
+
+  var trows = dkeys.map(function(dk) {
+    var tags = byDate[dk].names.map(function(n) {
+      var s = styleOf(n);
+      return '<span class="tag" style="background:' + s.fill + ';color:' + s.text + '">' + n + '</span>';
+    }).join('');
+    return '<tr><td style="color:#888;font-size:12px;white-space:nowrap">' + dk + '</td><td>' + tags + '</td></tr>';
+  }).join('');
+  document.getElementById('rtbl').innerHTML =
+    '<table><thead><tr><th>日期</th><th>活動</th></tr></thead><tbody>' + trows + '</tbody></table>';
+}
+
+window.onload = function() { load(); };
+</script>
+</body>
+</html>
